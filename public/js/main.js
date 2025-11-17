@@ -6,17 +6,14 @@ document.addEventListener('DOMContentLoaded', function() {
     const loader = document.getElementById('de-loader');
     const resultDiv = document.getElementById('result');
 
-    // Paste functionality with feedback
+    // Paste functionality
     btnPaste.addEventListener('click', async function() {
         try {
             const text = await navigator.clipboard.readText();
             txtUrl.value = text;
             toggleClearButton();
-            
-            // Show paste success feedback
             showNotification('✅ Pasted from clipboard!', 'success');
         } catch (err) {
-            // Fallback for browsers that don't support clipboard API
             txtUrl.focus();
             try {
                 document.execCommand('paste');
@@ -109,6 +106,21 @@ document.addEventListener('DOMContentLoaded', function() {
                 </div>
             </div>
             
+            <!-- Download Progress Bar (Hidden by default) -->
+            <div id="download-progress" style="display: none; margin: 20px 0;">
+                <div style="background: #f0f0f0; border-radius: 10px; padding: 20px;">
+                    <h5 style="margin-bottom: 15px;">📥 Downloading...</h5>
+                    <div class="progress-bar-container">
+                        <div class="progress-bar" id="progress-bar">
+                            <span id="progress-text">0%</span>
+                        </div>
+                    </div>
+                    <div style="margin-top: 10px; font-size: 14px; color: #666;">
+                        <span id="download-status">Preparing download...</span>
+                    </div>
+                </div>
+            </div>
+            
             <h4 class="mb-3 mt-4">📥 Download Options:</h4>
             <div class="download-options">
                 ${data.formats.map((format, index) => `
@@ -128,7 +140,7 @@ document.addEventListener('DOMContentLoaded', function() {
             </div>
             
             <div style="margin-top: 20px; padding: 15px; background: #fff3cd; border-radius: 8px; font-size: 14px;">
-                <strong>💡 Tip:</strong> For best quality, choose 1080p or 720p. For audio only, select the MP3 option.
+                <strong>💡 Tip:</strong> Download progress will be shown on this page. Please wait until it completes.
             </div>
         `;
 
@@ -181,7 +193,6 @@ document.addEventListener('DOMContentLoaded', function() {
         notification.innerHTML = message;
         document.body.appendChild(notification);
         
-        // Remove after 4 seconds with fade out
         setTimeout(() => {
             notification.style.animation = 'fadeOut 0.3s ease-out';
             setTimeout(() => {
@@ -190,36 +201,118 @@ document.addEventListener('DOMContentLoaded', function() {
         }, 4000);
     }
 
-    // Global download function with enhanced feedback
-    window.downloadVideo = function(url, formatId, title, type) {
-        // Show download starting notification
-        showNotification(`⬇️ Downloading ${type}...<br><small>Check your browser downloads</small>`, 'success');
+    // Global download function with progress tracking
+    window.downloadVideo = async function(url, formatId, title, type) {
+        const progressDiv = document.getElementById('download-progress');
+        const progressBar = document.getElementById('progress-bar');
+        const progressText = document.getElementById('progress-text');
+        const downloadStatus = document.getElementById('download-status');
         
-        // Create download URL
-        const downloadUrl = `/api/download?url=${url}&formatId=${formatId}`;
+        // Show progress bar
+        progressDiv.style.display = 'block';
+        progressBar.style.width = '0%';
+        progressText.textContent = '0%';
+        downloadStatus.textContent = 'Connecting to server...';
         
-        // Open download in new tab
-        const downloadWindow = window.open(downloadUrl, '_blank');
+        // Scroll to progress bar
+        progressDiv.scrollIntoView({ behavior: 'smooth', block: 'center' });
         
-        // Check if popup was blocked
-        if (!downloadWindow || downloadWindow.closed || typeof downloadWindow.closed == 'undefined') {
-            showNotification('⚠️ Popup blocked! Please allow popups for downloads.', 'warning');
+        try {
+            const downloadUrl = `/api/download?url=${url}&formatId=${formatId}`;
+            
+            // Fetch with progress tracking
+            const response = await fetch(downloadUrl);
+            
+            if (!response.ok) {
+                throw new Error('Download failed');
+            }
+            
+            // Get total file size
+            const contentLength = response.headers.get('content-length');
+            const total = parseInt(contentLength, 10);
+            
+            // Read the response stream
+            const reader = response.body.getReader();
+            let receivedLength = 0;
+            let chunks = [];
+            
+            downloadStatus.textContent = 'Downloading...';
+            
+            while (true) {
+                const { done, value } = await reader.read();
+                
+                if (done) break;
+                
+                chunks.push(value);
+                receivedLength += value.length;
+                
+                // Calculate progress
+                if (total) {
+                    const percent = Math.round((receivedLength / total) * 100);
+                    progressBar.style.width = percent + '%';
+                    progressText.textContent = percent + '%';
+                    downloadStatus.textContent = `Downloaded ${formatBytes(receivedLength)} of ${formatBytes(total)}`;
+                } else {
+                    downloadStatus.textContent = `Downloaded ${formatBytes(receivedLength)}`;
+                }
+            }
+            
+            // Combine chunks
+            const blob = new Blob(chunks);
+            
+            // Create download link
+            const blobUrl = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = blobUrl;
+            a.download = `${sanitizeFilename(title)}.${type.toLowerCase()}`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(blobUrl);
+            
+            // Show success
+            progressBar.style.width = '100%';
+            progressText.textContent = '100%';
+            downloadStatus.textContent = '✅ Download complete!';
+            progressBar.style.background = '#28a745';
+            
+            showNotification('✅ Download complete! Check your downloads folder.', 'success');
+            
+            // Hide progress bar after 3 seconds
+            setTimeout(() => {
+                progressDiv.style.display = 'none';
+            }, 3000);
+            
+        } catch (error) {
+            console.error('Download error:', error);
+            downloadStatus.textContent = '❌ Download failed!';
+            progressBar.style.background = '#dc3545';
+            showNotification('❌ Download failed. Please try again.', 'error');
         }
-        
-        // Track download (optional - for analytics)
-        console.log('Download initiated:', { title, formatId, type });
     };
+    
+    // Helper function to format bytes
+    function formatBytes(bytes) {
+        if (bytes === 0) return '0 Bytes';
+        const k = 1024;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+    }
+    
+    // Helper function to sanitize filename
+    function sanitizeFilename(filename) {
+        return filename.replace(/[^a-z0-9]/gi, '-').substring(0, 50);
+    }
 
-    // Add keyboard shortcuts
+    // Keyboard shortcuts
     document.addEventListener('keydown', function(e) {
-        // Ctrl+V or Cmd+V to focus input
         if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
             if (document.activeElement !== txtUrl) {
                 txtUrl.focus();
             }
         }
         
-        // Escape to clear
         if (e.key === 'Escape') {
             txtUrl.value = '';
             toggleClearButton();

@@ -168,9 +168,17 @@ app.get('/api/download', async (req, res) => {
         
         console.log('📁 Filename:', filename);
         
+        // Get the format to find file size
+        const format = videoInfo.formats.find(f => f.format_id === formatId);
+        
         // Set headers safely
         res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
         res.setHeader('Content-Type', 'video/mp4');
+        
+        // Set content-length if available (for progress tracking)
+        if (format && (format.filesize || format.filesize_approx)) {
+            res.setHeader('Content-Length', format.filesize || format.filesize_approx);
+        }
         
         const stream = ytDlpWrap.execStream([
             url,
